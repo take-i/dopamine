@@ -6,6 +6,7 @@ import { ContextMenuOpener } from '../../../common/context-menu-opener';
 import { Hacks } from '../../../common/hacks';
 import { Logger } from '../../../common/logger';
 import { MouseSelectionWatcher } from '../../../common/mouse-selection-watcher';
+import { TrackOrdering } from '../../../common/ordering/track-ordering';
 import { Scheduler } from '../../../common/scheduling/scheduler';
 import { BaseSettings } from '../../../common/settings/base-settings';
 import { BaseAppearanceService } from '../../../services/appearance/base-appearance.service';
@@ -24,6 +25,7 @@ import { TrackModels } from '../../../services/track/track-models';
 import { AddToPlaylistMenu } from '../../add-to-playlist-menu';
 import { CollectionPersister } from '../collection-persister';
 import { CollectionTab } from '../collection-tab';
+import { TrackOrder } from '../track-order';
 import { FoldersPersister } from './folders-persister';
 
 @Component({
@@ -52,8 +54,17 @@ export class CollectionFoldersComponent implements OnInit, OnDestroy {
         private foldersPersister: FoldersPersister,
         private scheduler: Scheduler,
         private logger: Logger,
-        private hacks: Hacks
-    ) {}
+        private hacks: Hacks,
+        private trackOrdering: TrackOrdering,
+    ) {
+        this.sortByOptionsMap = new Map<string, TrackOrder>();
+        this.sortByOptionsMap.set('Default', TrackOrder.byTrackTitleAscending);
+        this.sortByOptionsMap.set('Title Descending', TrackOrder.byTrackTitleDescending);
+        this.sortByOptionsMap.set('FileName Ascending', TrackOrder.byFileNameAsc);
+        this.sortByOptionsMap.set('FileName Descending', TrackOrder.byFileNameDesc);
+        this.sortByOptionsMap.set('Date Created Ascending', TrackOrder.byDateCreatedAsc);
+        this.sortByOptionsMap.set('Date Created Descending', TrackOrder.byDateCreatedDesc);
+    }
 
     private subscription: Subscription = new Subscription();
 
@@ -69,6 +80,12 @@ export class CollectionFoldersComponent implements OnInit, OnDestroy {
     public selectedSubfolder: SubfolderModel;
     public subfolderBreadCrumbs: SubfolderModel[] = [];
     public tracks: TrackModels = new TrackModels();
+
+    private defaultSort: TrackOrder = TrackOrder.byTrackTitleAscending;
+    private sort: TrackOrder = TrackOrder.byTrackTitleAscending;
+    private sortByOptionsMap: Map<string, TrackOrder>;
+    public sortByOptions: string[] = ['Default', 'Title Descending', 'FileName Ascending', 'FileName Descending', 'Date Created Ascending', 'Date Created Descending']
+    public sortBy: string = this.sortByOptions[0];
 
     public ngOnDestroy(): void {
         this.subscription.unsubscribe();
@@ -129,9 +146,19 @@ export class CollectionFoldersComponent implements OnInit, OnDestroy {
             this.foldersPersister.setOpenedSubfolder(new SubfolderModel(openedSubfolderPath, false));
 
             this.subfolderBreadCrumbs = await this.folderService.getSubfolderBreadCrumbsAsync(this.openedFolder, openedSubfolderPath);
-            this.tracks = await this.trackService.getTracksInSubfolderAsync(openedSubfolderPath);
-            this.mouseSelectionWatcher.initialize(this.tracks.tracks, false);
+            // this.tracks = await this.trackService.getTracksInSubfolderAsync(openedSubfolderPath);
+            
+            const tracks = await this.trackService.getTracksInSubfolderAsync(openedSubfolderPath);
 
+            if (this.sort != this.defaultSort) {
+                this.tracks = this.trackOrdering.getTracksOrderedBy(this.sort, tracks);
+            }
+            else {
+                this.tracks = tracks;
+            }
+
+            this.mouseSelectionWatcher.initialize(this.tracks.tracks, false);
+            
             // HACK: when refreshing the subfolder list, the tooltip of the last hovered
             // subfolder remains visible. This function is a workaround for this problem.
             this.hacks.removeTooltips();
@@ -154,6 +181,25 @@ export class CollectionFoldersComponent implements OnInit, OnDestroy {
 
         const persistedOpenedSubfolder: SubfolderModel = this.foldersPersister.getOpenedSubfolder();
         await this.setOpenedSubfolderAsync(persistedOpenedSubfolder);
+    }
+
+    public applySortByOption(sortByOption: string): void {
+        try {   
+            if (this.sortBy === sortByOption) {
+                return;
+            }
+
+            this.sortBy = sortByOption;
+            this.sort = this.sortByOptionsMap.get(this.sortBy);
+            this.tracks = this.trackOrdering.getTracksOrderedBy(this.sort, this.tracks);
+        }
+        catch (e) {
+            this.logger.error(
+                `Could not apply sort. Error: ${e.message} (${e})`,
+                'CollectionFoldersComponent',
+                'applySortByOption'
+            );
+        }
     }
 
     public setSelectedSubfolder(subfolder: SubfolderModel): void {
